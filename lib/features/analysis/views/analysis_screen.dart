@@ -1,24 +1,28 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
-import '../../viewmodels/finance_viewmodel.dart';
-import '../../models/transaction.dart';
+import '../../../models/transaction.dart';
+import '../../auth/viewmodels/auth_viewmodel.dart';
+import '../../dashboard/viewmodels/transaction_viewmodel.dart';
+import '../../../widgets/add_transaction_sheet.dart';
 
-class AnalysisScreen extends StatefulWidget {
+class AnalysisScreen extends ConsumerStatefulWidget {
   const AnalysisScreen({super.key});
 
   @override
-  State<AnalysisScreen> createState() => _AnalysisScreenState();
+  ConsumerState<AnalysisScreen> createState() => _AnalysisScreenState();
 }
 
-class _AnalysisScreenState extends State<AnalysisScreen> with SingleTickerProviderStateMixin {
+class _AnalysisScreenState extends ConsumerState<AnalysisScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   static final _currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
   final List<Color> _chartColors = [
-    const Color(0xFF1D9E75), const Color(0xFF378ADD), const Color(0xFFEF9F27),
-    const Color(0xFFD4537E), const Color(0xFF7F77DD), const Color(0xFFE24B4A),
+    const Color(0xFF1D9E75), const Color(0xFF378ADD),
+    const Color(0xFFEF9F27), const Color(0xFFD4537E),
+    const Color(0xFF7F77DD), const Color(0xFFE24B4A),
     const Color(0xFF639922), const Color(0xFF888780),
   ];
 
@@ -36,23 +40,29 @@ class _AnalysisScreenState extends State<AnalysisScreen> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
-    final vm = context.watch<FinanceViewModel>();
+    final userId = ref.watch(authViewModelProvider).userId ?? '';
+    final TransactionState txState = ref.watch(transactionViewModelProvider(userId));
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Análise Financeira', style: TextStyle(fontWeight: FontWeight.w600)),
+        title: const Text('Análise Financeira',
+            style: TextStyle(fontWeight: FontWeight.w600)),
         bottom: TabBar(
           controller: _tabController,
           labelStyle: const TextStyle(fontWeight: FontWeight.w600),
-          tabs: const [Tab(text: 'Gráficos'), Tab(text: 'Categorias'), Tab(text: 'Histórico')],
+          tabs: const [
+            Tab(text: 'Gráficos'),
+            Tab(text: 'Categorias'),
+            Tab(text: 'Histórico'),
+          ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ChartsTab(vm: vm, chartColors: _chartColors, currency: _currency),
-          _CategoriesTab(vm: vm, chartColors: _chartColors, currency: _currency),
-          _HistoryTab(vm: vm, currency: _currency),
+          _ChartsTab(txState: txState, chartColors: _chartColors, currency: _currency),
+          _CategoriesTab(txState: txState, chartColors: _chartColors, currency: _currency),
+          _HistoryTab(txState: txState, currency: _currency, userId: userId),
         ],
       ),
     );
@@ -60,26 +70,29 @@ class _AnalysisScreenState extends State<AnalysisScreen> with SingleTickerProvid
 }
 
 class _ChartsTab extends StatelessWidget {
-  final FinanceViewModel vm;
+  final TransactionState txState;
   final List<Color> chartColors;
   final NumberFormat currency;
 
-  const _ChartsTab({required this.vm, required this.chartColors, required this.currency});
+  const _ChartsTab({required this.txState, required this.chartColors, required this.currency});
 
   @override
   Widget build(BuildContext context) {
-    final byCategory = vm.expensesByCategory;
-    final total = vm.totalExpenses;
+    final byCategory = txState.expensesByCategory;
+    final total = txState.totalExpenses;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          Expanded(child: _SummaryCard(label: 'Receitas', value: currency.format(vm.totalIncome), color: const Color(0xFF1D9E75))),
+          Expanded(child: _SummaryCard(label: 'Receitas',
+              value: currency.format(txState.totalIncome), color: const Color(0xFF1D9E75))),
           const SizedBox(width: 12),
-          Expanded(child: _SummaryCard(label: 'Despesas', value: currency.format(vm.totalExpenses), color: const Color(0xFFE24B4A))),
+          Expanded(child: _SummaryCard(label: 'Despesas',
+              value: currency.format(txState.totalExpenses), color: const Color(0xFFE24B4A))),
           const SizedBox(width: 12),
-          Expanded(child: _SummaryCard(label: 'Saldo', value: currency.format(vm.totalBalance), color: const Color(0xFF378ADD))),
+          Expanded(child: _SummaryCard(label: 'Saldo',
+              value: currency.format(txState.totalBalance), color: const Color(0xFF378ADD))),
         ]),
         const SizedBox(height: 24),
         if (byCategory.isNotEmpty) ...[
@@ -119,28 +132,28 @@ class _ChartsTab extends StatelessWidget {
         ] else
           const Center(child: Padding(
             padding: EdgeInsets.all(40),
-            child: Text('Nenhuma despesa registrada ainda', style: TextStyle(color: Colors.grey)),
+            child: Text('Nenhuma despesa registrada', style: TextStyle(color: Colors.grey)),
           )),
         const SizedBox(height: 24),
-        _MonthlyBarChart(vm: vm),
+        _MonthlyBarChart(txState: txState),
       ]),
     );
   }
 }
 
 class _MonthlyBarChart extends StatelessWidget {
-  final FinanceViewModel vm;
-  const _MonthlyBarChart({required this.vm});
+  final TransactionState txState;
+  const _MonthlyBarChart({required this.txState});
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final months = List.generate(6, (i) => DateTime(now.year, now.month - 5 + i));
-    final monthLabels = months.map((m) => DateFormat('MMM', 'pt_BR').format(m)).toList();
-
+    final labels = months.map((m) => DateFormat('MMM', 'pt_BR').format(m)).toList();
     double maxVal = 1;
+
     final incomeData = months.map((m) {
-      final sum = vm.transactions
+      final sum = txState.transactions
           .where((tx) => tx.isIncome && tx.date.year == m.year && tx.date.month == m.month)
           .fold(0.0, (s, tx) => s + tx.amount);
       if (sum > maxVal) maxVal = sum;
@@ -148,7 +161,7 @@ class _MonthlyBarChart extends StatelessWidget {
     }).toList();
 
     final expenseData = months.map((m) {
-      final sum = vm.transactions
+      final sum = txState.transactions
           .where((tx) => !tx.isIncome && tx.date.year == m.year && tx.date.month == m.month)
           .fold(0.0, (s, tx) => s + tx.amount);
       if (sum > maxVal) maxVal = sum;
@@ -171,7 +184,7 @@ class _MonthlyBarChart extends StatelessWidget {
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             bottomTitles: AxisTitles(sideTitles: SideTitles(
               showTitles: true,
-              getTitlesWidget: (v, _) => Text(monthLabels[v.toInt()], style: const TextStyle(fontSize: 11)),
+              getTitlesWidget: (v, _) => Text(labels[v.toInt()], style: const TextStyle(fontSize: 11)),
             )),
           ),
           barGroups: List.generate(6, (i) => BarChartGroupData(
@@ -195,16 +208,16 @@ class _MonthlyBarChart extends StatelessWidget {
 }
 
 class _CategoriesTab extends StatelessWidget {
-  final FinanceViewModel vm;
+  final TransactionState txState;
   final List<Color> chartColors;
   final NumberFormat currency;
 
-  const _CategoriesTab({required this.vm, required this.chartColors, required this.currency});
+  const _CategoriesTab({required this.txState, required this.chartColors, required this.currency});
 
   @override
   Widget build(BuildContext context) {
-    final byCategory = vm.expensesByCategory;
-    final total = vm.totalExpenses;
+    final byCategory = txState.expensesByCategory;
+    final total = txState.totalExpenses;
     final sorted = byCategory.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
     if (sorted.isEmpty) {
@@ -226,16 +239,14 @@ class _CategoriesTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: Theme.of(ctx).colorScheme.surface,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.grey.shade100),
+            border: Border.all(color: Colors.grey.shade800),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Text(icon, style: const TextStyle(fontSize: 20)),
               const SizedBox(width: 10),
-              Expanded(child: Text(entry.key,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
-              Text(currency.format(entry.value),
-                  style: TextStyle(color: color, fontWeight: FontWeight.w700)),
+              Expanded(child: Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+              Text(currency.format(entry.value), style: TextStyle(color: color, fontWeight: FontWeight.w700)),
             ]),
             const SizedBox(height: 10),
             ClipRRect(
@@ -257,21 +268,23 @@ class _CategoriesTab extends StatelessWidget {
   }
 }
 
-class _HistoryTab extends StatefulWidget {
-  final FinanceViewModel vm;
+class _HistoryTab extends ConsumerStatefulWidget {
+  final TransactionState txState;
   final NumberFormat currency;
-  const _HistoryTab({required this.vm, required this.currency});
+  final String userId;
+
+  const _HistoryTab({required this.txState, required this.currency, required this.userId});
 
   @override
-  State<_HistoryTab> createState() => _HistoryTabState();
+  ConsumerState<_HistoryTab> createState() => _HistoryTabState();
 }
 
-class _HistoryTabState extends State<_HistoryTab> {
+class _HistoryTabState extends ConsumerState<_HistoryTab> {
   String _filter = 'Todos';
 
   @override
   Widget build(BuildContext context) {
-    final all = List<Transaction>.from(widget.vm.transactions)
+    final all = List<Transaction>.from(widget.txState.transactions)
       ..sort((a, b) => b.date.compareTo(a.date));
 
     final filtered = _filter == 'Receitas'
@@ -293,11 +306,11 @@ class _HistoryTabState extends State<_HistoryTab> {
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: sel ? Theme.of(context).colorScheme.primary : Colors.grey.shade100,
+                  color: sel ? Theme.of(context).colorScheme.primary : Colors.grey.shade900,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(f, style: TextStyle(
-                  color: sel ? Colors.white : Colors.grey.shade600,
+                  color: sel ? Colors.white : Colors.grey.shade400,
                   fontWeight: FontWeight.w600, fontSize: 13,
                 )),
               ),
@@ -315,31 +328,41 @@ class _HistoryTabState extends State<_HistoryTab> {
                   final tx = filtered[i];
                   final icon = categoryIcons[tx.category] ?? '📦';
                   final color = tx.isIncome ? Colors.green.shade500 : Colors.red.shade400;
-                  final bgColor = tx.isIncome ? Colors.green.shade50 : Colors.red.shade50;
+                  final bgColor = tx.isIncome
+                      ? Colors.green.shade900.withOpacity(0.3)
+                      : Colors.red.shade900.withOpacity(0.3);
 
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(ctx).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade100),
+                  return GestureDetector(
+                    onLongPress: () => showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => AddTransactionSheet(userId: widget.userId, editTransaction: tx),
                     ),
-                    child: Row(children: [
-                      Container(
-                        width: 40, height: 40,
-                        decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(10)),
-                        child: Center(child: Text(icon, style: const TextStyle(fontSize: 18))),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade800),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(tx.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                        Text('${tx.category} • ${DateFormat('dd/MM/yyyy').format(tx.date)}',
-                            style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
-                      ])),
-                      Text('${tx.isIncome ? '+' : '-'}${widget.currency.format(tx.amount)}',
-                          style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 14)),
-                    ]),
+                      child: Row(children: [
+                        Container(
+                          width: 40, height: 40,
+                          decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(10)),
+                          child: Center(child: Text(icon, style: const TextStyle(fontSize: 18))),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(tx.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          Text('${tx.category} • ${DateFormat('dd/MM/yyyy').format(tx.date)}',
+                              style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                        ])),
+                        Text('${tx.isIncome ? '+' : '-'}${widget.currency.format(tx.amount)}',
+                            style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 14)),
+                      ]),
+                    ),
                   );
                 },
               ),
@@ -365,7 +388,7 @@ class _SummaryCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w500)),
         const SizedBox(height: 4),
-        Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+        Text(value, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
       ]),
     );
   }

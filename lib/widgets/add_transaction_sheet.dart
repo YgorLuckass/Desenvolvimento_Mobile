@@ -1,24 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
-import '../viewmodels/finance_viewmodel.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/transaction.dart';
+import '../features/dashboard/viewmodels/transaction_viewmodel.dart';
 
-class AddTransactionSheet extends StatefulWidget {
-  const AddTransactionSheet({super.key});
+class AddTransactionSheet extends ConsumerStatefulWidget {
+  final String userId;
+  final Transaction? editTransaction;
+
+  const AddTransactionSheet({
+    super.key,
+    required this.userId,
+    this.editTransaction,
+  });
 
   @override
-  State<AddTransactionSheet> createState() => _AddTransactionSheetState();
+  ConsumerState<AddTransactionSheet> createState() => _AddTransactionSheetState();
 }
 
-class _AddTransactionSheetState extends State<AddTransactionSheet> {
-  bool _isIncome = false;
+class _AddTransactionSheetState extends ConsumerState<AddTransactionSheet> {
+  late bool _isIncome;
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _amountController = TextEditingController();
-  String _selectedCategory = expenseCategories.first;
-  DateTime _selectedDate = DateTime.now();
+  late TextEditingController _titleController;
+  late TextEditingController _amountController;
+  late String _selectedCategory;
+  late DateTime _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final tx = widget.editTransaction;
+    _isIncome = tx?.isIncome ?? false;
+    _titleController = TextEditingController(text: tx?.title ?? '');
+    _amountController = TextEditingController(
+        text: tx != null ? tx.amount.toStringAsFixed(2) : '');
+    _selectedCategory = tx?.category ??
+        (_isIncome ? incomeCategories.first : expenseCategories.first);
+    _selectedDate = tx?.date ?? DateTime.now();
+  }
 
   @override
   void dispose() {
@@ -30,7 +49,8 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
   void _switchType(bool isIncome) {
     setState(() {
       _isIncome = isIncome;
-      _selectedCategory = isIncome ? incomeCategories.first : expenseCategories.first;
+      _selectedCategory =
+          isIncome ? incomeCategories.first : expenseCategories.first;
     });
   }
 
@@ -44,24 +64,36 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
     if (picked != null) setState(() => _selectedDate = picked);
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    final tx = Transaction(
-      id: const Uuid().v4(),
-      title: _titleController.text.trim(),
-      amount: double.parse(_amountController.text.replaceAll(',', '.')),
-      isIncome: _isIncome,
-      date: _selectedDate,
-      category: _selectedCategory,
-    );
-    context.read<FinanceViewModel>().addTransaction(tx);
-    Navigator.pop(context);
+    final vm = ref.read(transactionViewModelProvider(widget.userId).notifier);
+
+    if (widget.editTransaction != null) {
+      await vm.updateTransaction(Transaction(
+        id: widget.editTransaction!.id,
+        title: _titleController.text.trim(),
+        amount: double.parse(_amountController.text.replaceAll(',', '.')),
+        isIncome: _isIncome,
+        date: _selectedDate,
+        category: _selectedCategory,
+      ));
+    } else {
+      await vm.addTransaction(
+        title: _titleController.text.trim(),
+        amount: double.parse(_amountController.text.replaceAll(',', '.')),
+        isIncome: _isIncome,
+        date: _selectedDate,
+        category: _selectedCategory,
+      );
+    }
+    if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final categories = _isIncome ? incomeCategories : expenseCategories;
+    final isEditing = widget.editTransaction != null;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -77,11 +109,14 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
           children: [
             Center(child: Container(
               width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2)),
             )),
             const SizedBox(height: 16),
-            Text('Nova Transação',
-                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+            Text(isEditing ? 'Editar Transação' : 'Nova Transação',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 20),
             Row(children: [
               Expanded(child: _typeButton('Despesa', false, Colors.red.shade400)),
@@ -98,13 +133,16 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
                     labelText: 'Descrição',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  validator: (v) => (v == null || v.isEmpty) ? 'Informe a descrição' : null,
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Informe a descrição' : null,
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _amountController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]'))],
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]'))
+                  ],
                   decoration: InputDecoration(
                     labelText: 'Valor (R\$)',
                     prefixText: 'R\$ ',
@@ -124,7 +162,9 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
                     labelText: 'Categoria',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  items: categories
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
                   onChanged: (v) => setState(() => _selectedCategory = v!),
                 ),
                 const SizedBox(height: 14),
@@ -147,13 +187,16 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
             ElevatedButton(
               onPressed: _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isIncome ? Colors.green.shade500 : Colors.red.shade400,
+                backgroundColor:
+                    _isIncome ? Colors.green.shade500 : Colors.red.shade400,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
-              child: const Text('Salvar',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              child: Text(isEditing ? 'Salvar alterações' : 'Adicionar',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -170,11 +213,14 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
           color: selected ? color : Colors.transparent,
-          border: Border.all(color: selected ? color : Colors.grey.shade300),
+          border: Border.all(
+              color: selected ? color : Colors.grey.shade300),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Text(label, textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.w600,
+        child: Text(label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontWeight: FontWeight.w600,
                 color: selected ? Colors.white : Colors.grey)),
       ),
     );

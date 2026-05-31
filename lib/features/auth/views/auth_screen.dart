@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../viewmodels/finance_viewmodel.dart';
-import '../dashboard/dashboard_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../viewmodels/auth_viewmodel.dart';
+import '../../dashboard/views/dashboard_screen.dart';
 
-class AuthScreen extends StatefulWidget {
+class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
 
   @override
-  State<AuthScreen> createState() => _AuthScreenState();
+  ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> {
+class _AuthScreenState extends ConsumerState<AuthScreen> {
   bool _isLogin = true;
-  bool _isLoading = false;
   bool _obscurePassword = true;
   final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -34,37 +35,45 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    final vm = context.read<FinanceViewModel>();
-    bool success;
-    String errorMsg = '';
-
+    final vm = ref.read(authViewModelProvider.notifier);
     if (_isLogin) {
-      success = await vm.login(_emailController.text.trim(), _passwordController.text);
-      if (!success) errorMsg = 'Email ou senha inválidos.';
+      await vm.login(_emailController.text.trim(), _passwordController.text);
     } else {
-      success = await vm.register(_emailController.text.trim(), _passwordController.text);
-      if (!success) errorMsg = 'Email já cadastrado.';
-    }
-
-    setState(() => _isLoading = false);
-    if (!mounted) return;
-
-    if (success) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMsg), backgroundColor: Colors.red.shade700),
+      await vm.register(
+        _nameController.text.trim(),
+        _emailController.text.trim(),
+        _passwordController.text,
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final authState = ref.watch(authViewModelProvider);
     final theme = Theme.of(context);
+
+    ref.listen(authViewModelProvider, (prev, next) {
+      if (next.status == AuthStatus.success && next.userId != null) {
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (_, a, b) { return DashboardScreen(); },
+            transitionsBuilder: (_, anim, __, child) =>
+                FadeTransition(opacity: anim, child: child),
+            transitionDuration: const Duration(milliseconds: 400),
+          ),
+        );
+      }
+      if (next.status == AuthStatus.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.errorMessage ?? 'Erro desconhecido'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    });
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -105,37 +114,53 @@ class _AuthScreenState extends State<AuthScreen> {
               Form(
                 key: _formKey,
                 child: Column(children: [
-                  _buildField(controller: _emailController, label: 'Email',
-                      icon: Icons.email_outlined,
-                      keyboardType: TextInputType.emailAddress,
-                      validator: (v) {
-                        if (v == null || v.isEmpty) return 'Informe o email';
-                        if (!v.contains('@')) return 'Email inválido';
-                        return null;
-                      }),
+                  if (!_isLogin) ...[
+                    _buildField(
+                      controller: _nameController,
+                      label: 'Nome completo',
+                      icon: Icons.person_outline,
+                      validator: (v) => (v == null || v.isEmpty) ? 'Informe seu nome' : null,
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  _buildField(
+                    controller: _emailController,
+                    label: 'Email',
+                    icon: Icons.email_outlined,
+                    keyboardType: TextInputType.emailAddress,
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Informe o email';
+                      if (!v.contains('@')) return 'Email inválido';
+                      return null;
+                    },
+                  ),
                   const SizedBox(height: 14),
-                  _buildField(controller: _passwordController, label: 'Senha',
-                      icon: Icons.lock_outline, obscure: _obscurePassword,
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                      ),
-                      validator: (v) {
-                        if (v == null || v.isEmpty) return 'Informe a senha';
-                        if (v.length < 4) return 'Mínimo 4 caracteres';
-                        return null;
-                      }),
+                  _buildField(
+                    controller: _passwordController,
+                    label: 'Senha',
+                    icon: Icons.lock_outline,
+                    obscure: _obscurePassword,
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Informe a senha';
+                      if (v.length < 6) return 'Mínimo 6 caracteres';
+                      return null;
+                    },
+                  ),
                   const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity, height: 52,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : _submit,
+                      onPressed: authState.status == AuthStatus.loading ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: theme.colorScheme.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: _isLoading
+                      child: authState.status == AuthStatus.loading
                           ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
                           : Text(_isLogin ? 'Entrar' : 'Criar conta',
                               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),

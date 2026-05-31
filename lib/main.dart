@@ -1,26 +1,36 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:provider/provider.dart';
-import 'viewmodels/finance_viewmodel.dart';
-import 'views/auth/auth_screen.dart';
-import 'views/dashboard/dashboard_screen.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:flutter/foundation.dart';
+import 'firebase_options.dart';
+import 'features/auth/viewmodels/auth_viewmodel.dart';
+import 'features/auth/views/auth_screen.dart';
+import 'features/dashboard/views/dashboard_screen.dart';
+import 'features/dashboard/views/dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => FinanceViewModel(),
-      child: const FinanceApp(),
-    ),
+
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  runApp(const ProviderScope(child: FinanceApp()));
 }
 
-class FinanceApp extends StatelessWidget {
+class FinanceApp extends ConsumerWidget {
   const FinanceApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       title: 'FinanceApp',
       debugShowCheckedModeBanner: false,
@@ -28,7 +38,7 @@ class FinanceApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF1D9E75),
-          brightness: Brightness.light,
+          brightness: Brightness.dark,
         ),
         appBarTheme: const AppBarTheme(
           elevation: 0,
@@ -36,27 +46,28 @@ class FinanceApp extends StatelessWidget {
           scrolledUnderElevation: 0,
         ),
       ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1D9E75),
-          brightness: Brightness.dark,
-        ),
-      ),
       home: const _Splash(),
     );
   }
 }
 
-class _Splash extends StatelessWidget {
+class _Splash extends ConsumerWidget {
   const _Splash();
 
   @override
-  Widget build(BuildContext context) {
-    final vm = context.watch<FinanceViewModel>();
-    if (vm.isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authViewModelProvider);
+
+    if (authState.status == AuthStatus.loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
-    return vm.loggedInUser != null ? const DashboardScreen() : const AuthScreen();
+
+    if (authState.status == AuthStatus.success && authState.userId != null) {
+      return DashboardScreen();
+    }
+
+    return AuthScreen();
   }
 }
